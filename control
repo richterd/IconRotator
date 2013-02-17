@@ -1,4 +1,4 @@
-Package: com.rpetrich.iconrotator
+Package: de.richterd.iconrotator
 Priority: optional
 Section: System
 Architecture: iphoneos-arm
@@ -6,4 +6,4 @@ Version: 1.0
 Description: Rotating icons
 Name: IconRotator
 Depends: firmware (>= 5.0), mobilesubstrate
-Author: Ryan Petrich <rpetrich+iconrotator@gmail.com>
+Author: Daniel Richter <mail.danielrichter@gmail.com>

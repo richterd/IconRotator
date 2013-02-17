@@ -2,15 +2,19 @@
 #import <QuartzCore/QuartzCore.h>
 #import <notify.h>
 #import <CaptainHook/CaptainHook.h>
+#import <CoreMotion/CoreMotion.h>
 
 static CFMutableSetRef icons;
 static CATransform3D currentTransform;
 static CGFloat reflectionOpacity;
-static int notify_token;
-static uint64_t lastOrientation;
+static CMMotionManager *motionManager;
+static UIApplication *springboard;
+//static UIView *iconView;
+static volatile int orientationStatus;
+static BOOL isUnlocked = NO;
 
 @interface SBIconView : UIView
-@end
+@end	
 
 @interface SBNowPlayingBarView : UIView
 @property (readonly, nonatomic) UIButton *toggleButton;
@@ -27,6 +31,7 @@ static uint64_t lastOrientation;
 @interface UIView (Springtomize)
 - (CGFloat)springtomizeScaleFactor;
 @end
+
 
 @interface SBOrientationLockManager : NSObject {
 	NSMutableSet *_lockOverrideReasons;
@@ -51,6 +56,7 @@ static uint64_t lastOrientation;
 - (void)_updateLockStateWithOrientation:(int)orientation forceUpdateHID:(BOOL)forceHID changes:(id)changes;
 - (BOOL)_effectivelyLocked;
 @end
+
 
 static CATransform3D (*ScaledTransform)(UIView *);
 
@@ -105,7 +111,17 @@ static CATransform3D ScaledTransformDefault(UIView *iconView)
 }
 
 %end
+	
+	/* //Find the correct views which have to be manipulated
+%hook SBIconListView
+-(void)didMoveToSuperview{
+	%orig;
+	if(!iconView)
+		iconView = ((UIView *)self).superview.superview;
+}
 
+%end		
+*/
 static void ApplyRotatedViewTransform(UIView *view)
 {
 	if (view) {
@@ -160,81 +176,58 @@ static void ApplyRotatedViewTransform(UIView *view)
 }
 
 %end
+	
+	/*
+static void UpdateIconViewWidthBigger(BOOL bigger){
+	[UIView beginAnimations : nil context:nil];
+	[UIView setAnimationDuration:0.2];
+	[UIView setAnimationBeginsFromCurrentState:YES];
 
-static void SetAccelerometerEnabled(BOOL enabled)
-{
-	// This code is quite evil
-	SBAccelerometerInterface *accelerometer = [%c(SBAccelerometerInterface) sharedInstance];
-	NSMutableArray **_clients = CHIvarRef(accelerometer, _clients, NSMutableArray *);
-	if (_clients) {
-		NSMutableArray *clients = *_clients;
-		if (!clients)
-			*_clients = clients = [[NSMutableArray alloc] init];
-		static SBAccelerometerClient *client;
-		if (!client) {
-			client = [[%c(SBAccelerometerClient) alloc] init];
-			[client setUpdateInterval:0.1];
-		}
-		if (client) {
-			if (enabled) {
-				if ([clients indexOfObjectIdenticalTo:client] == NSNotFound)
-					[clients addObject:client];
-			} else {
-				[clients removeObjectIdenticalTo:client];
-			}
-		}
+	CGRect frame = iconView.frame;
+	if(bigger == NO){
+		frame.size.width -= 10;
+		frame.origin.x -= 5;
 	}
-	[accelerometer updateSettings];
+	else{
+		frame.size.width += 10;
+		frame.origin.x += 5;
+	}
+	iconView.frame = frame;
+	[UIView commitAnimations];
 }
-
-%hook SpringBoard
-
-- (void)applicationDidFinishLaunching:(UIApplication *)application
-{
-	%orig;
-	if ([UIView instancesRespondToSelector:@selector(springtomizeScaleFactor)])
-		ScaledTransform = ScaledTransformSpringtomize;
-	SetAccelerometerEnabled(YES);
-}
-
-%end
-
-%hook SBAwayController
-
-- (void)dimScreen:(BOOL)animated
-{
-	%orig;
-	SetAccelerometerEnabled(NO);
-}
-
-- (void)undimScreen
-{
-	%orig;
-	SBOrientationLockManager *olm = [%c(SBOrientationLockManager) sharedInstance];
-	if (![olm _effectivelyLocked])
-		SetAccelerometerEnabled(YES);
-}
-
-%end;
+*/	
 
 static void UpdateWithOrientation(UIInterfaceOrientation orientation)
 {
+	//NSLog(@"Calculate new Rotation: %i", orientation);
 	switch (orientation) {
 		case UIInterfaceOrientationPortrait:
 			currentTransform = CATransform3DIdentity;
 			reflectionOpacity = 1.0f;
+			orientationStatus = 1;
+			//[springboard setStatusBarHidden:NO withAnimation:UIStatusBarAnimationFade];
+			//[springboard setStatusBarOrientation:UIInterfaceOrientationPortrait animated:YES];
+			//UpdateIconViewWidthBigger(YES);
 			break;
 		case UIInterfaceOrientationPortraitUpsideDown:
 			currentTransform = CATransform3DMakeRotation(M_PI, 0.0f, 0.0f, 1.0f);
 			reflectionOpacity = 0.0f;
+			//[springboard setStatusBarHidden:NO withAnimation:UIStatusBarAnimationFade];
+			//[springboard setStatusBarOrientation:UIInterfaceOrientationLandscapeRight animated:YES];
 			break;
 		case UIInterfaceOrientationLandscapeRight:
 			currentTransform = CATransform3DMakeRotation(0.5f * M_PI, 0.0f, 0.0f, 1.0f);
 			reflectionOpacity = 0.0f;
+			//[springboard setStatusBarHidden:YES withAnimation:UIStatusBarAnimationFade];
+			//[springboard setStatusBarOrientation:UIInterfaceOrientationLandscapeRight animated:YES];
+			orientationStatus = 3;
 			break;
 		case UIInterfaceOrientationLandscapeLeft:
 			currentTransform = CATransform3DMakeRotation(-0.5f * M_PI, 0.0f, 0.0f, 1.0f);
 			reflectionOpacity = 0.0f;
+			//[springboard setStatusBarHidden:YES withAnimation:UIStatusBarAnimationFade];
+			//[springboard setStatusBarOrientation:UIInterfaceOrientationLandscapeLeft animated:YES];
+			orientationStatus = 4;
 			break;
 		default:
 			return;
@@ -256,15 +249,97 @@ static void UpdateWithOrientation(UIInterfaceOrientation orientation)
 	}
 }
 
-%hook SBOrientationLockManager
+static void SetAccelerometerEnabled(BOOL enabled)
+{
+	if(enabled){
+		//NSLog(@"Set Accelerometer enabled");
+		if(!motionManager){
+			motionManager = [[CMMotionManager alloc] init];
+			motionManager.accelerometerUpdateInterval = 0.2;
+		}
+		[motionManager startAccelerometerUpdatesToQueue:[NSOperationQueue mainQueue] withHandler:^(CMAccelerometerData *accelerometerData, NSError *error)
+		{
+			if(accelerometerData){
+				float x = accelerometerData.acceleration.x;
+				float y = accelerometerData.acceleration.y;
+				float z = accelerometerData.acceleration.z; //That it only moves if not lying
+				//Turn Right
+				if(x > 0.5 && y > -0.3 && z > -0.7 && z < 0.7 && orientationStatus != 4){
+					UpdateWithOrientation(4);
+				}
+				//Turn Portrait
+				else if(y < -0.5 && x > -0.3 && x < 0.3 && z > -0.7 && z < 0.7 && orientationStatus != 1){
+					UpdateWithOrientation(1);
+				}
+				//Turn Left
+				else if(x < -0.5 && y > -0.3 && z > -0.7 && z < 0.7 && orientationStatus != 3){
+					UpdateWithOrientation(3);
+				}
+			}
+		}];
 
+	}
+	else{
+		//NSLog(@"Set Accelerometer disbaled");
+		if(motionManager){
+			[motionManager stopAccelerometerUpdates];
+		}
+	}
+}
+
+%hook SBAwayController
+	
+- (void)dimScreen:(BOOL)animated
+{
+	%orig;
+	SetAccelerometerEnabled(NO);
+	isUnlocked = NO;
+	UpdateWithOrientation(1);
+}
+
+//- (void)undimScreen
+//{
+//	%orig;
+//	UpdateWithOrientation(1);
+//}
+
+%end;
+
+
+
+%hook SpringBoard
+
+- (void)applicationDidFinishLaunching:(UIApplication *)application
+{
+	%orig;
+	if ([UIView instancesRespondToSelector:@selector(springtomizeScaleFactor)])
+		ScaledTransform = ScaledTransformSpringtomize;
+		//UIApplication *application = [UIApplication sharedApplication];
+	if(!springboard)
+		springboard = self;
+	//SetAccelerometerEnabled(YES);
+}
+
+- (void)undim //Springboard is shown
+{
+	%orig;
+	isUnlocked = YES;
+	SBOrientationLockManager *olm = [%c(SBOrientationLockManager) sharedInstance];
+		if (![olm _effectivelyLocked])
+	 	    SetAccelerometerEnabled(YES);
+}
+
+%end
+
+%hook SBOrientationLockManager
+	
 - (void)_updateLockStateWithChanges:(id)changes
 {
 	%orig;
 	if ([self _effectivelyLocked]) {
 		SetAccelerometerEnabled(NO);
 		UpdateWithOrientation([self userLockOrientation]);
-	} else {
+	} else if(isUnlocked){
 		SetAccelerometerEnabled(YES);
 	}
 }
@@ -275,7 +350,7 @@ static void UpdateWithOrientation(UIInterfaceOrientation orientation)
 	if ([self _effectivelyLocked]) {
 		SetAccelerometerEnabled(NO);
 		UpdateWithOrientation([self userLockOrientation]);
-	} else {
+	} else if(isUnlocked){
 		SetAccelerometerEnabled(YES);
 	}
 }
@@ -286,40 +361,12 @@ static void UpdateWithOrientation(UIInterfaceOrientation orientation)
 	if ([self _effectivelyLocked]) {
 		SetAccelerometerEnabled(NO);
 		UpdateWithOrientation([self userLockOrientation]);
-	} else {
+	} else if(isUnlocked) {
 		SetAccelerometerEnabled(YES);
 	}
 }
 
 %end
-
-static void OrientationChangedCallback(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo)
-{
-	SBOrientationLockManager *olm = [%c(SBOrientationLockManager) sharedInstance];
-	if ([olm _effectivelyLocked])
-		return;
-	uint64_t orientation = 0;
-	notify_get_state(notify_token, &orientation);
-	if (UIDeviceOrientationIsValidInterfaceOrientation(orientation)) {
-		if (orientation != lastOrientation) {
-			lastOrientation = orientation;
-			switch (orientation) {
-				case UIDeviceOrientationPortrait:
-					UpdateWithOrientation(UIInterfaceOrientationPortrait);
-					break;
-				case UIDeviceOrientationPortraitUpsideDown:
-					UpdateWithOrientation(UIInterfaceOrientationPortraitUpsideDown);
-					break;
-				case UIDeviceOrientationLandscapeLeft:
-					UpdateWithOrientation(UIInterfaceOrientationLandscapeRight);
-					break;
-				case UIDeviceOrientationLandscapeRight:
-					UpdateWithOrientation(UIInterfaceOrientationLandscapeLeft);
-					break;
-			}
-		}
-	}
-}
 
 %ctor
 {
@@ -327,6 +374,5 @@ static void OrientationChangedCallback(CFNotificationCenterRef center, void *obs
 	ScaledTransform = ScaledTransformDefault;
 	currentTransform = CATransform3DIdentity;
 	icons = CFSetCreateMutable(kCFAllocatorDefault, 0, NULL);
-	notify_register_check("com.apple.springboard.rawOrientation", &notify_token);
-	CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), NULL, OrientationChangedCallback, CFSTR("com.apple.springboard.rawOrientation"), NULL, CFNotificationSuspensionBehaviorCoalesce);
+	orientationStatus = 1;
 }

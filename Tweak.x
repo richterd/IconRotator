@@ -9,7 +9,6 @@ static CATransform3D currentTransform;
 static CGFloat reflectionOpacity;
 static CMMotionManager *motionManager;
 static UIApplication *springboard;
-//static UIView *iconView;
 static volatile int orientationStatus;
 static BOOL isUnlocked = NO;
 
@@ -112,16 +111,6 @@ static CATransform3D ScaledTransformDefault(UIView *iconView)
 
 %end
 	
-	/* //Find the correct views which have to be manipulated
-%hook SBIconListView
--(void)didMoveToSuperview{
-	%orig;
-	if(!iconView)
-		iconView = ((UIView *)self).superview.superview;
-}
-
-%end		
-*/
 static void ApplyRotatedViewTransform(UIView *view)
 {
 	if (view) {
@@ -177,25 +166,6 @@ static void ApplyRotatedViewTransform(UIView *view)
 
 %end
 	
-	/*
-static void UpdateIconViewWidthBigger(BOOL bigger){
-	[UIView beginAnimations : nil context:nil];
-	[UIView setAnimationDuration:0.2];
-	[UIView setAnimationBeginsFromCurrentState:YES];
-
-	CGRect frame = iconView.frame;
-	if(bigger == NO){
-		frame.size.width -= 10;
-		frame.origin.x -= 5;
-	}
-	else{
-		frame.size.width += 10;
-		frame.origin.x += 5;
-	}
-	iconView.frame = frame;
-	[UIView commitAnimations];
-}
-*/	
 
 static void UpdateWithOrientation(UIInterfaceOrientation orientation)
 {
@@ -204,30 +174,22 @@ static void UpdateWithOrientation(UIInterfaceOrientation orientation)
 		case UIInterfaceOrientationPortrait:
 			currentTransform = CATransform3DIdentity;
 			reflectionOpacity = 1.0f;
-			orientationStatus = 1;
-			//[springboard setStatusBarHidden:NO withAnimation:UIStatusBarAnimationFade];
-			//[springboard setStatusBarOrientation:UIInterfaceOrientationPortrait animated:YES];
-			//UpdateIconViewWidthBigger(YES);
+			orientationStatus = UIInterfaceOrientationPortrait;
 			break;
 		case UIInterfaceOrientationPortraitUpsideDown:
+		//Never called
 			currentTransform = CATransform3DMakeRotation(M_PI, 0.0f, 0.0f, 1.0f);
 			reflectionOpacity = 0.0f;
-			//[springboard setStatusBarHidden:NO withAnimation:UIStatusBarAnimationFade];
-			//[springboard setStatusBarOrientation:UIInterfaceOrientationLandscapeRight animated:YES];
 			break;
 		case UIInterfaceOrientationLandscapeRight:
 			currentTransform = CATransform3DMakeRotation(0.5f * M_PI, 0.0f, 0.0f, 1.0f);
 			reflectionOpacity = 0.0f;
-			//[springboard setStatusBarHidden:YES withAnimation:UIStatusBarAnimationFade];
-			//[springboard setStatusBarOrientation:UIInterfaceOrientationLandscapeRight animated:YES];
-			orientationStatus = 3;
+			orientationStatus = UIInterfaceOrientationLandscapeRight;
 			break;
 		case UIInterfaceOrientationLandscapeLeft:
 			currentTransform = CATransform3DMakeRotation(-0.5f * M_PI, 0.0f, 0.0f, 1.0f);
 			reflectionOpacity = 0.0f;
-			//[springboard setStatusBarHidden:YES withAnimation:UIStatusBarAnimationFade];
-			//[springboard setStatusBarOrientation:UIInterfaceOrientationLandscapeLeft animated:YES];
-			orientationStatus = 4;
+			orientationStatus = UIInterfaceOrientationLandscapeLeft;
 			break;
 		default:
 			return;
@@ -265,15 +227,15 @@ static void SetAccelerometerEnabled(BOOL enabled)
 				float z = accelerometerData.acceleration.z; //That it only moves if not lying
 				//Turn Right
 				if(x > 0.5 && y > -0.3 && z > -0.7 && z < 0.7 && orientationStatus != 4){
-					UpdateWithOrientation(4);
+					UpdateWithOrientation(UIInterfaceOrientationLandscapeLeft);
 				}
 				//Turn Portrait
 				else if(y < -0.5 && x > -0.3 && x < 0.3 && z > -0.7 && z < 0.7 && orientationStatus != 1){
-					UpdateWithOrientation(1);
+					UpdateWithOrientation(UIInterfaceOrientationPortrait);
 				}
 				//Turn Left
 				else if(x < -0.5 && y > -0.3 && z > -0.7 && z < 0.7 && orientationStatus != 3){
-					UpdateWithOrientation(3);
+					UpdateWithOrientation(UIInterfaceOrientationLandscapeRight);
 				}
 			}
 		}];
@@ -294,15 +256,8 @@ static void SetAccelerometerEnabled(BOOL enabled)
 	%orig;
 	SetAccelerometerEnabled(NO);
 	isUnlocked = NO;
-	UpdateWithOrientation(1);
+	UpdateWithOrientation(UIInterfaceOrientationPortrait);
 }
-
-//- (void)undimScreen
-//{
-//	%orig;
-//	UpdateWithOrientation(1);
-//}
-
 %end;
 
 
@@ -314,10 +269,8 @@ static void SetAccelerometerEnabled(BOOL enabled)
 	%orig;
 	if ([UIView instancesRespondToSelector:@selector(springtomizeScaleFactor)])
 		ScaledTransform = ScaledTransformSpringtomize;
-		//UIApplication *application = [UIApplication sharedApplication];
 	if(!springboard)
 		springboard = self;
-	//SetAccelerometerEnabled(YES);
 }
 
 - (void)undim //Springboard is shown
